@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -8,12 +7,11 @@ WORKDIR /app
 # Dependencies first, so this layer is cached until the lockfile changes.
 COPY pyproject.toml uv.lock README.md ./
 ARG EXTRAS="--extra ui --extra local-embeddings"
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project ${EXTRAS}
+RUN uv sync --frozen --no-dev --no-install-project ${EXTRAS}
 
 COPY src ./src
 COPY data ./data
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev ${EXTRAS}
+RUN uv sync --frozen --no-dev ${EXTRAS}
 
 # The local embedding model is baked into the image: no download at start-up, no external dependency.
 ARG PRELOAD_LOCAL_MODEL=true
