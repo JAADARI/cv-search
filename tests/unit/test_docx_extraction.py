@@ -19,3 +19,16 @@ def test_tables_render_one_row_per_line():
 def test_embedded_images_are_deduplicated_and_ignore_icons():
     images = extract_docx((BANK / "CV_Charles_McTurland.docx").read_bytes()).images
     assert 1 <= len(images) <= 3
+
+
+def test_transparent_images_are_flattened_on_white_not_black():
+    import io
+
+    from PIL import Image
+
+    from cvsearch.parsing.docx import _flatten_on_white
+
+    transparent = io.BytesIO()
+    Image.new("RGBA", (4, 4), (0, 0, 0, 0)).save(transparent, format="PNG")
+    flattened = Image.open(io.BytesIO(_flatten_on_white(transparent.getvalue())))
+    assert flattened.convert("RGB").getpixel((0, 0)) == (255, 255, 255)

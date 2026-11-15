@@ -77,6 +77,20 @@ def _render_children(parent: etree._Element) -> list[str]:
     return lines
 
 
+def _flatten_on_white(raw: bytes) -> bytes:
+    """Re-encode an image as opaque PNG on a white background.
+
+    Many CV images are black text on a transparent layer; a plain RGB conversion
+    turns transparency into black and makes the text invisible to the vision model.
+    """
+    image = Image.open(BytesIO(raw)).convert("RGBA")
+    canvas = Image.new("RGBA", image.size, (255, 255, 255, 255))
+    canvas.alpha_composite(image)
+    buffer = BytesIO()
+    canvas.convert("RGB").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _embedded_images(archive: zipfile.ZipFile, document: etree._Element) -> list[ImageInput]:
     rels = etree.fromstring(archive.read("word/_rels/document.xml.rels"))
     targets = {r.get("Id"): r.get("Target") for r in rels.findall("rel:Relationship", _NS)}
@@ -91,9 +105,7 @@ def _embedded_images(archive: zipfile.ZipFile, document: etree._Element) -> list
         if digest in seen or len(raw) < _MIN_IMAGE_BYTES:
             continue
         seen.add(digest)
-        buffer = BytesIO()
-        Image.open(BytesIO(raw)).convert("RGB").save(buffer, format="PNG")
-        images.append(ImageInput(buffer.getvalue()))
+        images.append(ImageInput(_flatten_on_white(raw)))
     return images
 
 

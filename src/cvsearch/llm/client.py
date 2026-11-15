@@ -150,22 +150,26 @@ class LLMClient:
         return schema.model_validate_json(choice.message.content)
 
     def transcribe(self, images: list[ImageInput]) -> str:
-        """Transcribe document page images to plain text, preserving reading order."""
+        """Transcribe document images to plain text, one request per image.
+
+        Requests are kept small on purpose: the gateway answers 413 to large multi-image payloads.
+        """
+        parts = [self._transcribe_one(image) for image in images]
+        text = "\n\n".join(part for part in parts if part)
+        if not text.strip():
+            raise LLMError("Vision transcription returned no text")
+        return text
+
+    def _transcribe_one(self, image: ImageInput) -> str:
         response = self._complete(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an OCR engine. Transcribe the document verbatim, in natural reading order. "
-                    "Output the text only, no commentary.",
+                    "content": "You are an OCR engine. Transcribe the image verbatim, in natural reading order. "
+                    "Output the text only, no commentary. If the image has no text, output nothing.",
                 },
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "Transcribe these pages."}, *(i.as_content() for i in images)],
-                },
+                {"role": "user", "content": [{"type": "text", "text": "Transcribe."}, image.as_content()]},
             ],
             reasoning_effort="minimal",
         )
-        text = response.choices[0].message.content or ""
-        if not text.strip():
-            raise LLMError("Vision transcription returned no text")
-        return text
+        return (response.choices[0].message.content or "").strip()
