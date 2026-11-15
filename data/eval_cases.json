@@ -1,0 +1,27 @@
+[
+  {
+    "query": "Data Scientist senior avec expérience en IA générative et déploiement cloud (Azure ou GCP)",
+    "expected": ["Martin Dupont"],
+    "min_recall": 1.0
+  },
+  {
+    "query": "Profil ayant développé des chatbots",
+    "expected": ["Jeanne Ferdinand", "Aziz de la court"],
+    "min_recall": 1.0
+  },
+  {
+    "query": "Data Ingénieur qui concoit des datas platforms sur AWS ou Azure",
+    "expected": ["Aziz de la court", "Jeanne Ferdinand", "Matthieu Dufour"],
+    "min_recall": 1.0
+  },
+  {
+    "query": "Chef de projet avec de l'expérience en cadrage de projet",
+    "expected": ["Martin Dupont", "Pierre Maturet"],
+    "min_recall": 0.5
+  },
+  {
+    "query": "Directeur Marketing avec au moins 10 ans d'expérience dans le conseil",
+    "expected": [],
+    "forbidden": ["Pierre Maturet", "Martin Dupont", "Nicolas Pascal", "Jean-Marc Ruissot"]
+  }
+]
