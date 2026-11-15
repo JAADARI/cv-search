@@ -1,13 +1,11 @@
-variable "location" {
-  description = "Azure region for all resources except Azure OpenAI."
+variable "subscription_id" {
+  description = "Azure subscription id."
   type        = string
-  default     = "francecentral"
 }
 
-variable "openai_location" {
-  description = "Region of the Azure OpenAI account (must offer the embedding model)."
+variable "resource_group_name" {
+  description = "Existing resource group to deploy into (resource groups cannot be created with this account)."
   type        = string
-  default     = "francecentral"
 }
 
 variable "project" {
@@ -23,9 +21,8 @@ variable "environment" {
 }
 
 variable "image_tag" {
-  description = "Tag of the application image in ACR. Empty = deploy a placeholder image (bootstrap)."
+  description = "Tag of the application image in ACR."
   type        = string
-  default     = ""
 }
 
 variable "apim_base_url" {
@@ -45,27 +42,10 @@ variable "chat_deployment" {
   default     = "gpt-5"
 }
 
-variable "embedding_model" {
-  description = "Azure OpenAI embedding model to deploy."
-  type        = string
-  default     = "text-embedding-3-small"
-}
-
-variable "embedding_dimensions" {
-  description = "Vector size stored in pgvector (embedding-3 models can be shortened)."
-  type        = number
-  default     = 1024
-}
-
 variable "postgres_sku" {
-  description = "PostgreSQL Flexible Server SKU."
+  description = "PostgreSQL Flexible Server SKU (the guardrail policy allows B1ms and B2s)."
   type        = string
   default     = "B_Standard_B1ms"
-}
-
-variable "postgres_storage_mb" {
-  type    = number
-  default = 32768
 }
 
 variable "tags" {

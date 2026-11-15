@@ -1,10 +1,6 @@
 # Local stack: PostgreSQL+pgvector, API, worker and UI sharing one image.
 x-app: &app
-  build:
-    context: .
-    args:
-      EXTRAS: "--extra ui --extra local-embeddings"
-      PRELOAD_LOCAL_MODEL: "true"
+  build: .
   env_file: .env
   environment:
     DATABASE_URL: postgresql://cvsearch:cvsearch@db:5432/cvsearch

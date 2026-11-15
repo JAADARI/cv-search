@@ -1,60 +1,57 @@
 locals {
-  # name in the container app -> secret in Key Vault
-  secret_refs = {
-    "apim-subscription-key" = "apim-subscription-key"
-    "api-key"               = "api-key"
-    "ui-password"           = "ui-password"
-    "embedding-api-key"     = "embedding-api-key"
-    "database-url"          = "database-url"
+  # Container Apps secrets (encrypted at rest by the platform), keyed by the name used in env blocks.
+  secrets = {
+    "acr-password"          = azurerm_container_registry.main.admin_password
+    "apim-subscription-key" = var.apim_subscription_key
+    "api-key"               = random_password.api_key.result
+    "ui-password"           = random_password.ui_password.result
+    "database-url" = join("", [
+      "postgresql://cvsearch:", random_password.db.result, "@", azurerm_postgresql_flexible_server.main.fqdn,
+      ":5432/", azurerm_postgresql_flexible_server_database.main.name, "?sslmode=require"
+    ])
   }
 
+  # Embeddings run in-process (local multilingual model baked into the image): the OpenAI account of
+  # this subscription has key auth disabled and no role can be granted, see docs/adr/0004.
   common_env = {
     APIM_BASE_URL        = var.apim_base_url
     CHAT_DEPLOYMENT      = var.chat_deployment
-    EMBEDDING_PROVIDER   = "azure"
-    EMBEDDING_ENDPOINT   = azurerm_cognitive_account.openai.endpoint
-    EMBED_DEPLOYMENT     = azurerm_cognitive_deployment.embedding.name
-    EMBEDDING_DIMENSIONS = tostring(var.embedding_dimensions)
+    EMBEDDING_PROVIDER   = "local"
+    EMBEDDING_DIMENSIONS = "1024"
+    FASTEMBED_CACHE_PATH = "/opt/fastembed"
   }
 
   common_secret_env = {
     APIM_SUBSCRIPTION_KEY = "apim-subscription-key"
-    EMBEDDING_API_KEY     = "embedding-api-key"
     DATABASE_URL          = "database-url"
     CVSEARCH_API_KEY      = "api-key"
   }
 }
 
-# One module-less definition per app keeps the plan readable; api, worker and ui share one image.
 resource "azurerm_container_app" "api" {
   name                         = "ca-${local.name}-api"
-  resource_group_name          = azurerm_resource_group.main.name
+  resource_group_name          = local.rg
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
   tags                         = local.tags
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.app.id]
-  }
-
   registry {
-    server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.app.id
+    server               = azurerm_container_registry.main.login_server
+    username             = azurerm_container_registry.main.admin_username
+    password_secret_name = "acr-password"
   }
 
   dynamic "secret" {
-    for_each = local.secret_refs
+    for_each = nonsensitive(toset(keys(local.secrets)))
     content {
-      name                = secret.key
-      key_vault_secret_id = azurerm_key_vault_secret.app[secret.value].versionless_id
-      identity            = azurerm_user_assigned_identity.app.id
+      name  = secret.value
+      value = local.secrets[secret.value]
     }
   }
 
   ingress {
     external_enabled = true
-    target_port      = local.bootstrap ? 80 : 8000
+    target_port      = 8000
     transport        = "auto"
     traffic_weight {
       latest_revision = true
@@ -64,14 +61,14 @@ resource "azurerm_container_app" "api" {
 
   template {
     min_replicas = 1
-    max_replicas = 3
+    max_replicas = 2
 
     container {
       name    = "api"
       image   = local.image
-      cpu     = 0.5
-      memory  = "1Gi"
-      command = local.bootstrap ? null : ["cvsearch", "api"]
+      cpu     = 2
+      memory  = "4Gi"
+      command = ["cvsearch", "api"]
 
       dynamic "env" {
         for_each = local.common_env
@@ -88,13 +85,13 @@ resource "azurerm_container_app" "api" {
         }
       }
 
-      dynamic "liveness_probe" {
-        for_each = local.bootstrap ? [] : [1]
-        content {
-          transport = "HTTP"
-          path      = "/health"
-          port      = 8000
-        }
+      liveness_probe {
+        transport               = "HTTP"
+        path                    = "/health"
+        port                    = 8000
+        initial_delay           = 45
+        interval_seconds        = 20
+        failure_count_threshold = 3
       }
     }
 
@@ -103,47 +100,40 @@ resource "azurerm_container_app" "api" {
       concurrent_requests = "20"
     }
   }
-
-  depends_on = [time_sleep.rbac]
 }
 
 resource "azurerm_container_app" "worker" {
   name                         = "ca-${local.name}-worker"
-  resource_group_name          = azurerm_resource_group.main.name
+  resource_group_name          = local.rg
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
   tags                         = local.tags
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.app.id]
-  }
-
   registry {
-    server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.app.id
+    server               = azurerm_container_registry.main.login_server
+    username             = azurerm_container_registry.main.admin_username
+    password_secret_name = "acr-password"
   }
 
   dynamic "secret" {
-    for_each = local.secret_refs
+    for_each = nonsensitive(toset(keys(local.secrets)))
     content {
-      name                = secret.key
-      key_vault_secret_id = azurerm_key_vault_secret.app[secret.value].versionless_id
-      identity            = azurerm_user_assigned_identity.app.id
+      name  = secret.value
+      value = local.secrets[secret.value]
     }
   }
 
   template {
-    # The worker polls a Postgres queue, so it must always run; two replicas are safe (SKIP LOCKED).
+    # The worker polls a Postgres queue, so it always runs; extra replicas are safe (FOR UPDATE SKIP LOCKED).
     min_replicas = 1
     max_replicas = 2
 
     container {
       name    = "worker"
       image   = local.image
-      cpu     = 0.5
-      memory  = "1Gi"
-      command = local.bootstrap ? ["sleep", "infinity"] : ["cvsearch", "worker"]
+      cpu     = 2
+      memory  = "4Gi"
+      command = ["cvsearch", "worker"]
 
       dynamic "env" {
         for_each = local.common_env
@@ -161,39 +151,32 @@ resource "azurerm_container_app" "worker" {
       }
     }
   }
-
-  depends_on = [time_sleep.rbac]
 }
 
 resource "azurerm_container_app" "ui" {
   name                         = "ca-${local.name}-ui"
-  resource_group_name          = azurerm_resource_group.main.name
+  resource_group_name          = local.rg
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
   tags                         = local.tags
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.app.id]
-  }
-
   registry {
-    server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.app.id
+    server               = azurerm_container_registry.main.login_server
+    username             = azurerm_container_registry.main.admin_username
+    password_secret_name = "acr-password"
   }
 
   dynamic "secret" {
-    for_each = local.secret_refs
+    for_each = nonsensitive(toset(keys(local.secrets)))
     content {
-      name                = secret.key
-      key_vault_secret_id = azurerm_key_vault_secret.app[secret.value].versionless_id
-      identity            = azurerm_user_assigned_identity.app.id
+      name  = secret.value
+      value = local.secrets[secret.value]
     }
   }
 
   ingress {
     external_enabled = true
-    target_port      = local.bootstrap ? 80 : 8501
+    target_port      = 8501
     transport        = "auto"
     traffic_weight {
       latest_revision = true
@@ -202,7 +185,7 @@ resource "azurerm_container_app" "ui" {
   }
 
   template {
-    min_replicas = 0
+    min_replicas = 1
     max_replicas = 2
 
     container {
@@ -210,7 +193,7 @@ resource "azurerm_container_app" "ui" {
       image  = local.image
       cpu    = 0.5
       memory = "1Gi"
-      command = local.bootstrap ? null : [
+      command = [
         "streamlit", "run", "src/cvsearch/ui/streamlit_app.py",
         "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"
       ]
@@ -234,6 +217,4 @@ resource "azurerm_container_app" "ui" {
       concurrent_requests = "30"
     }
   }
-
-  depends_on = [time_sleep.rbac]
 }
