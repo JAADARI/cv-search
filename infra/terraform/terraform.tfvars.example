@@ -1,5 +1,5 @@
-location              = "francecentral"
-openai_location       = "francecentral"
-environment           = "dev"
+subscription_id       = "<subscription id>"
+resource_group_name   = "<existing resource group>"
 apim_base_url         = "https://apim-genai-tech-test.azure-api.net/c/<slug>"
 apim_subscription_key = "<never commit this file>"
+image_tag             = "<tag pushed to ACR>"

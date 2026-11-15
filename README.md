@@ -145,12 +145,12 @@ Cinq requêtes de l'énoncé, avec les profils attendus (`expected`), interdits 
 
 ## Déploiement Azure
 
-Infrastructure Terraform ([infra/terraform](infra/terraform)) : Container Apps (api, worker, ui) dans un VNet, PostgreSQL Flexible Server privé avec pgvector, Azure OpenAI (embeddings), Key Vault (accès par identité managée), ACR, Log Analytics. Région `francecentral`, plus petits niveaux (estimation à confirmer dans le calculateur Azure : quelques dizaines d'euros par mois).
+Infrastructure Terraform ([infra/terraform](infra/terraform)) : Container Apps (api, worker, ui), PostgreSQL Flexible Server avec pgvector, Key Vault (clé d'API et mot de passe générés), ACR, Log Analytics, dans un groupe de ressources existant. Plus petits niveaux.
 
 ```bash
 az login
 infra/scripts/bootstrap.sh                                  # une fois : stockage de l'état Terraform
-cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars   # renseigner la passerelle
+cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars   # abonnement, groupe de ressources, passerelle
 infra/scripts/deploy.sh                                     # infra + build ACR + déploiement
 ```
 
@@ -158,7 +158,9 @@ Le script affiche les URL et les commandes pour lire la clé d'API et le mot de 
 
 CI/CD (GitHub Actions) : `ci.yml` (ruff, mypy, tests, `terraform validate`, build de l'image) sur chaque PR ; `deploy.yml` sur `main` (authentification OIDC, aucun secret Azure stocké).
 
-> **État de la livraison :** l'infrastructure est validée (`terraform validate`) mais **n'a pas été appliquée** depuis mon poste : `az` n'y est pas installé et il n'y a pas de session Azure. Le plan Terraform, la disponibilité du modèle d'embedding dans la région et les workflows GitHub n'ont donc pas été exécutés de bout en bout. L'image Docker n'a pas non plus été construite ici (accès au démon Docker refusé) ; le code, lui, a été exécuté en direct contre la passerelle réelle et un PostgreSQL/pgvector embarqué.
+> **État de la livraison :** le code, l'image Docker (build ACR réussi) et `docker compose` ont été exécutés de bout en bout. Le déploiement Azure est **partiel** : registre, Key Vault, Log Analytics et environnement Container Apps ont été créés, mais PostgreSQL Flexible Server a échoué (`SkuNotAvailable` pour `B_Standard_B1ms` en `westeurope`), donc les trois Container Apps ne sont pas déployées. Il reste à choisir un SKU disponible (`postgres_sku`) ou une autre région, puis relancer `infra/scripts/deploy.sh`.
+>
+> Contraintes de l'abonnement (politique « guardrails ») qui ont orienté l'infrastructure : pas de rôle RBAC créable (accès par clé et mot de passe d'administration du registre), pas de VNet, compte Azure OpenAI sans clé (`disableLocalAuth`) donc embeddings **locaux** dans l'image.
 
 ## Hypothèses, limites, pistes
 

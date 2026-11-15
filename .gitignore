@@ -15,3 +15,5 @@ __pycache__/
 !*.tfvars.example
 .pgdata/
 backend.hcl
+tfplan
+*.tfplan
