@@ -1,0 +1,58 @@
+name: Deploy
+
+# Runs after a push to main. Authentication uses OIDC federation: no Azure secret is stored in GitHub.
+# Required repository variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+# TF_STATE_RG, TF_STATE_SA. Required secrets: APIM_SUBSCRIPTION_KEY. Variable: APIM_BASE_URL.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency: deploy-production
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_apim_base_url: ${{ vars.APIM_BASE_URL }}
+  TF_VAR_apim_subscription_key: ${{ secrets.APIM_SUBSCRIPTION_KEY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform init
+        run: |
+          terraform -chdir=infra/terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=cvsearch.tfstate" \
+            -backend-config="use_azuread_auth=true"
+      - name: Ensure the registry exists (targeted, running apps are untouched)
+        run: terraform -chdir=infra/terraform apply -input=false -auto-approve -target=azurerm_container_registry.main
+      - name: Build image in ACR
+        run: |
+          ACR=$(terraform -chdir=infra/terraform output -raw acr_name)
+          az acr build -r "$ACR" -t "cvsearch:${GITHUB_SHA::7}" .
+      - name: Roll out
+        run: terraform -chdir=infra/terraform apply -input=false -auto-approve -var "image_tag=${GITHUB_SHA::7}"
+      - name: Smoke test
+        run: |
+          URL=$(terraform -chdir=infra/terraform output -raw api_url)
+          for i in $(seq 1 30); do curl -fsS "$URL/health" && exit 0; sleep 10; done
+          exit 1

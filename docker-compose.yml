@@ -1,0 +1,45 @@
+# Local stack: PostgreSQL+pgvector, API, worker and UI sharing one image.
+x-app: &app
+  build:
+    context: .
+    args:
+      EXTRAS: "--extra ui --extra local-embeddings"
+      PRELOAD_LOCAL_MODEL: "true"
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://cvsearch:cvsearch@db:5432/cvsearch
+    CVSEARCH_API_URL: http://api:8000
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cvsearch
+      POSTGRES_PASSWORD: cvsearch
+      POSTGRES_DB: cvsearch
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvsearch"]
+      interval: 5s
+      retries: 10
+    ports: ["5432:5432"]
+
+  api:
+    <<: *app
+    command: ["cvsearch", "api"]
+    ports: ["8000:8000"]
+
+  worker:
+    <<: *app
+    command: ["cvsearch", "worker"]
+
+  ui:
+    <<: *app
+    command: ["streamlit", "run", "src/cvsearch/ui/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports: ["8501:8501"]
+
+volumes:
+  pgdata:

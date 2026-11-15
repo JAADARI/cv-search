@@ -1,0 +1,5 @@
+location              = "francecentral"
+openai_location       = "francecentral"
+environment           = "dev"
+apim_base_url         = "https://apim-genai-tech-test.azure-api.net/c/<slug>"
+apim_subscription_key = "<never commit this file>"
